@@ -1,0 +1,77 @@
+import pandas as pd
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tools.eval_measures import rmse
+import matplotlib.pyplot as plt
+import logging
+import os
+
+# Initialize logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Number of products
+num_products = 8
+
+# Function to preprocess data for demand forecasting
+def preprocess_demand_data(file_path):
+    if not os.path.exists(file_path):
+        logging.error(f'File not found: {file_path}')
+        return None
+
+    try:
+        data = pd.read_csv(file_path, parse_dates=['date'])
+        data['date'] = pd.to_datetime(data['date'], errors='coerce')
+        data.dropna(subset=['date'], inplace=True)
+        data.set_index('date', inplace=True)
+        demand_data = data['sales'].resample('M').sum()  # Summing monthly sales for monthly demand
+        return demand_data
+    except Exception as e:
+        logging.error(f'Error processing file {file_path}: {e}')
+        return None
+
+# Function to train and evaluate SARIMA model for demand forecasting
+def train_sarima_demand_model(demand_data):
+    try:
+        order = (1, 1, 1)
+        seasonal_order = (1, 1, 1, 12)
+        model = SARIMAX(demand_data, order=order, seasonal_order=seasonal_order)
+        model_fit = model.fit(disp=False)
+        return model_fit
+    except Exception as e:
+        logging.error(f'Error training SARIMA model: {e}')
+        return None
+
+# Forecasting demand for each product
+for i in range(1, num_products + 1):
+    file_path = os.path.join('c:/xampp/htdocs/ascms/sales/sales prediction', f'Product{i}.csv')
+    demand_data = preprocess_demand_data(file_path)
+    if demand_data is None:
+        continue
+
+    model_fit = train_sarima_demand_model(demand_data)
+    if model_fit is None:
+        continue
+
+    forecast_length = 12  # Forecasting for 12 months
+    forecast = model_fit.get_forecast(steps=forecast_length)
+    forecast_index = pd.date_range(demand_data.index[-1], periods=forecast_length + 1, freq='M')[1:]
+    forecast_values = forecast.predicted_mean
+
+    # Calculate and Log Model Evaluation Metrics
+    if len(demand_data) > forecast_length:
+        test_data = demand_data[-forecast_length:]
+        mse = ((test_data - forecast_values[:len(test_data)]) ** 2).mean()
+        logging.info(f'Product {i} - MSE: {mse}')
+
+    # Plotting the actual and forecasted demand
+    plt.figure(figsize=(12, 6))
+    plt.plot(demand_data, label='Actual Demand')
+    plt.plot(forecast_index, forecast_values, label='Forecasted Demand', color='orange')
+    plt.fill_between(forecast_index, 
+                     forecast.conf_int().iloc[:, 0], 
+                     forecast.conf_int().iloc[:, 1], 
+                     color='k', alpha=.15)
+    plt.title(f'Demand Forecast for Product {i}')
+    plt.xlabel('Date')
+    plt.ylabel('Demand')
+    plt.legend()
+    plt.show()
